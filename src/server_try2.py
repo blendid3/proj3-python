@@ -95,7 +95,7 @@ def updatefile(filename, version, hashlist):
     if _isCrashed or not _isLeader:
         raise BaseException()
     print("UpdateFile("+filename+")")
-    if (filename not in fileinfomap.keys() and version != 1) or (version != fileinfomap[filename][0] + 1):
+    if (filename not in fileinfomap.keys() and version != 1) or (filename in fileinfomap.keys() and version != fileinfomap[filename][0] + 1):
         return False
     _log.append((_term, filename, version, hashlist))
     while filename not in fileinfomap.keys() or fileinfomap[filename][0] != version or fileinfomap[filename][1] != hashlist:
