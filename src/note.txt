@@ -1,0 +1,7 @@
+用的时候初始化就好了
+
+initiate is very important, remember do this
+
+thread_follower_actioon
+
+name follower is not defined

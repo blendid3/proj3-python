@@ -46,11 +46,12 @@ def state_machine_running():
 
 ### append entries only change the log,
 def append_Entries(prevlogindex, prev_log, entries, leader_term,leader_commit):
-    global log, match_index,currentTerm,commitIndex,flag_follower,flag_candidate
+    global log, match_index,currentTerm,commitIndex,flag_follower,flag_candidate,flag_leader
     if leader_term >= currentTerm:
         with global_var_lock:
             flag_follower=1
             flag_candidate=0
+            flag_leader=0
         if leader_term > currentTerm:
             with global_var_lock:
                 currentTerm = leader_term
@@ -77,6 +78,7 @@ def append_Entries(prevlogindex, prev_log, entries, leader_term,leader_commit):
         return False,match_index, currentTerm
 
 def crash():
+    global flag_crash,flag_leader,flag_follower,flag_candidate
     flag_crash=1
     flag_leader=0
     flag_follower=0
@@ -104,6 +106,7 @@ def readconfig(config, servernum):
 
         else:
             hostport = "http://" + hostport
+
             follower=[]
             follower_rpc = xmlrpc.client.ServerProxy(hostport, allow_none=True)
             follower.append(i)
@@ -118,14 +121,17 @@ def tester_getversion(filename):
 
 def requestVote(serverid, candidate_term,candidate_log,candidate_prevlogindex):
     """Requests vote to be the leader"""
-    global currentTerm
-    global votedFor
+    global currentTerm,reset_timer
+    global votedFor ,flag_candidate,flag_follower,flag_leader
     ## that is because candidate term must larger than follower, or it cannot get the vote from the follower
     with global_var_lock:
         if candidate_term > currentTerm:
             currentTerm = candidate_term
+            reset_timer=1
+            flag_candidate=0; flag_follower=1;flag_leader=0
             if candidate_log[candidate_prevlogindex] == log[len(candidate_log)-1]:  ## candidate log[commit index]== fellower log[commit_index]
                 votedFor = serverid
+                print("I vote for "+str(votedFor))
                 return currentTerm, True
 
     return currentTerm,False
@@ -165,13 +171,11 @@ class _thread_leader_fellower (threading.Thread):
         threading.Thread.__init__(self)
         self.leader_action_finished=threading.Event()
         self.follower_action_finished=threading.Event()
-        self.candidate_action_finished=threading.Event()
     def run(self):
         # logging.debug('event set: %s', event_is_set)
         logging.debug("Thread: %s start" , (self.name))
         while True:
-            print(currentTerm)
-            print(flag_candidate)
+            print("node"+str(id)+ " currentTerm is "+str(currentTerm))
             if self.isleader():
                 print("become leader")
                 thread_leader_action=threading.Thread(name='thread_leader_action',
@@ -180,14 +184,14 @@ class _thread_leader_fellower (threading.Thread):
                 self.leader_action_finished.wait()## don't finished until all the leader threads is finished
                 self.leader_action_finished.clear()
             if self.iscrash():
-
+                print("become crash")
                 thread_crash_action=threading.Thread(name='thread_crash_action',
                                 target=self.crash_action)
                 thread_crash_action.start()
                 self.crash_action_finished.wait()## don't finished until all the leader threads is finished
 
             if self.isfollower():
-                print("print become follower")
+                print("become follower")
                 thread_follower_action=threading.Thread(name='thread_follower_action',
                                 target=self.follower_action)
                 thread_follower_action.start()
@@ -196,8 +200,8 @@ class _thread_leader_fellower (threading.Thread):
             if self.iscandidate():
                 print("become candidate")
                 self.candidate_action()
-                self.candidate_action_finished.wait()
-            time.sleep(fresh_frequence)
+            print("state changed")
+
 
 
 
@@ -269,7 +273,7 @@ class _thread_leader_fellower (threading.Thread):
         else:
             entries = log[nextIndex[follower[0]]]
         follower_rpc = follower[1]
-        flag, match_index, follower_term = follower_rpc.append_Entries(prevlogindex, prev_log, entries, leader_term)
+        flag, match_index, follower_term = follower_rpc.surfstore.append_Entries(prevlogindex, prev_log, entries, leader_term)
         ###judge the case:
         self.lock.acquire()
         if leader_term < follower_term:
@@ -302,7 +306,7 @@ class _thread_leader_fellower (threading.Thread):
         else:
             entries = log[nextIndex[follower[0]]]
         follower_rpc = follower[1]
-        flag, match_index, follower_term = follower_rpc.append_Entries(prevlogindex, prev_log, entries, leader_term)
+        flag, match_index, follower_term = follower_rpc.surfstore.append_Entries(prevlogindex, prev_log, entries, leader_term)
         ###judge the case:
 
         if leader_term < follower_term:
@@ -325,65 +329,91 @@ class _thread_leader_fellower (threading.Thread):
                         ( follower,leader_term)).start()
     ####candidate part
     def candidate_action(self):
-        global followers, getvotes,voteGranted,candidate_exit,flag_leader,flag_candidate,candidate_time_out,period_election
-        threading.Timer(period_election,self.candidate_timeout).start()
+        global followers, getvotes,voteGranted,candidate_exit,flag_leader,flag_candidate,candidate_time_out,period_election,candidate_threads,currentTerm
+        candidate_threads=[]
+        getvotes = 0
+        candidate_time_out = 0
+        candidate_exit = 0
+        t1=threading.Timer(period_election,self.candidate_timeout)
+        candidate_threads.append(t1)
+
         for follower in followers:
-            threading.Thread(name="request_vote", target= self.request_vote_from_follower,args=(follower,)).start()
+            thread_follower_vote=threading.Thread(name="request_vote", target= self.request_vote_from_follower,args=(follower,))
+            candidate_threads.append(thread_follower_vote)
+
+        for thread in candidate_threads:
+            thread.start()
+
+        ### regular refresh
         while not candidate_exit:
             if candidate_time_out:
-                print("hello")
-                candidate_time_out=0
                 candidate_exit = 1
-                getvotes = 0
+                currentTerm = currentTerm + 1
             else:
                 if getvotes >=( len(voteGranted) - 1) / 2:
                     flag_leader = 1
                     flag_candidate = 0
                     candidate_exit = 1
-                    getvotes=0
-                    candidate_time_out = 0
                 ### what happens if them conflict
             time.sleep(fresh_frequence)
         time.sleep(period_heartbeat)
-        candidate_exit = 0
+        for thread in candidate_threads:
+            thread.join()
+        print("candidate"+str(id)+" get votes:" + str(getvotes))
 
     def candidate_timeout(self):
-        global candidate_time_out,currentTerm
-        candidate_time_out=1
-        currentTerm  = currentTerm+1
+        global candidate_time_out,candidate_exit
+        with global_var_lock:
+            if candidate_exit:
+                return
+            candidate_time_out = 1
 
-    def request_vote_from_follower(self,follower):
-        global currentTerm, flag_candidate,flag_follower,getvotes,voteGranted,flag_leader
-        if flag_follower==1 or flag_leader==1 or flag_candidate==0 or candidate_exit==1:
+
+    def request_vote_from_follower(self, follower):
+
+        global currentTerm, flag_candidate, flag_follower, getvotes, voteGranted, flag_leader, candidate_threads, candidate_exit
+        if candidate_exit == 1:
             return
         follower_rpc = follower[1]
-        follower_term,flag=follower_rpc.requestVote(id, currentTerm, log, len(log) - 1)
-        if follower_term>currentTerm:
-            currentTerm=follower_term
-            flag_candidate=0
-            flag_follower=1
-        if flag==True:## vote to you
-            voteGranted[follower[0]]=True
-            getvotes+=1
-
-        if flag==-1:## crash
-            threading.Timer(period_heartbeat,self.request_vote_from_follower,(follower)).start()
+        ### if the follower is not connected, I do this
+        try:
+            follower_term, flag = follower_rpc.surfstore.requestVote(id, currentTerm, log, len(log) - 1)
+        except:
+            print("follower_rpc.surfstore.requestVote work wrong, the follower id is %d" % follower[0])
+            t = threading.Timer(period_heartbeat, self.request_vote_from_follower, (follower,))
+            candidate_threads.append(t)
+            t.start()
+            return
+        global_var_lock.acquire()
+        if follower_term > currentTerm:
+            currentTerm = follower_term
+            flag_candidate = 0
+            flag_follower = 1
+            candidate_exit = 1
+        global_var_lock.release()
+        if flag == True:  ## vote to you
+            voteGranted[follower[0]] = True
+            getvotes += 1
+        if flag == -1:  ## crash
+            t = threading.Timer(period_heartbeat, self.request_vote_from_follower, (follower,))
+            t.start()
+            candidate_threads.append(t)
 
     ##
     ### follower part
     def follower_action(self):
         global  flag_follower,fresh_frequence,reset_timer
         ### this funciton only creat
-        thread_cycle=threading.Timer(period_election, self.follower_timeout)
+        thread_cycle=threading.Timer(period_follower, self.follower_timeout)
         thread_cycle.start()
         ##scan the reset_timer
         while flag_follower==1:
             if reset_timer==1:
+                print("follower get reset")
                 reset_timer=0
                 thread_cycle.cancel()
                 del thread_cycle
-                thread_cycle = threading.Timer(period_election, self.follower_timeout,
-                                               (follower, leader_term))
+                thread_cycle = threading.Timer(period_follower, self.follower_timeout)
                 thread_cycle.start()
             time.sleep(fresh_frequence )
         if thread_cycle.is_alive():
@@ -393,8 +423,9 @@ class _thread_leader_fellower (threading.Thread):
     def follower_timeout(self):
         global  flag_follower
         global  flag_candidate
-        flag_candidate=1
-        flag_follower=0
+        with global_var_lock:
+            flag_candidate = 1
+            flag_follower = 0
     ##
 
     def isleader(self):
@@ -432,7 +463,7 @@ if __name__ == "__main__":
 
     # server list has list of other servers
     serverlist = []
-    followers = serverlist
+
 
     # maxnum is maximum number of servers
     maxnum, host, port = readconfig(config, servernum)
@@ -459,15 +490,17 @@ if __name__ == "__main__":
         voteGranted.append(False)
 
     voteGranted[servernum] = True
-
+    followers = serverlist
+    print(followers)
     ## the value is matchIndex 2,3,1,2,3, for example, if the leader is 0, then it means fellower 1 have replicated 3 entries
     ## and the fellower 2 have replicated 1 entires
     flag_follower = True
     flag_leader = False
     flag_crash = False
     flag_candidate = False
-    period_heartbeat = 0.25  ##s
-    period_election = 1  ##s
+    period_heartbeat = 0.1  ##s
+    period_election = 0.6  ##s
+    period_follower=1.25
     reset_timer = 0  ###????
     global_var_lock = threading.Lock()
     fresh_frequence = 0.01
