@@ -1,0 +1,2 @@
+python C:\Users\zhqbl\OneDrive\桌面\UCSD_CSE224-master\proj3\proj3-python\src\server.py C:\Users\zhqbl\OneDrive\桌面\UCSD_CSE224-master\proj3\proj3-python\src\config.txt 0
+
