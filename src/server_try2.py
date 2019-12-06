@@ -201,6 +201,8 @@ def appendEntries(serverid, term, prev_log_index, prev_log_term, entries, leader
     global _term
     global _votedFor
     global _isCrashed
+    global _electionTimeoutEvent
+
     if _isCrashed:
         raise BaseException()
     _electionTimeoutEvent.set()
