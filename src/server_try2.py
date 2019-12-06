@@ -121,8 +121,11 @@ def isLeader():
 def crash():
     """Crashes this metadata store"""
     global _isCrashed
+    global _isLeader
+    
     print("Crash()")
     _isCrashed = True
+    _isLeader = False
     return True
 
 # "Restores" this metadata store, allowing it to start responding
@@ -150,6 +153,7 @@ def restore():
 def isCrashed():
     """Returns whether this node is crashed or not"""
     global _isCrashed
+
     print("IsCrashed()")
     return _isCrashed
 
