@@ -1,11 +1,10 @@
 import argparse
-import math
 import random
 import time
 import xmlrpc.client
 from hashlib import sha256
 from socketserver import ThreadingMixIn
-from threading import Event, Thread
+from threading import Event, Timer, Thread
 from xmlrpc.server import SimpleXMLRPCRequestHandler, SimpleXMLRPCServer
 
 
@@ -31,10 +30,10 @@ _lastApplied = 0
 _nextIndex = []
 _matchIndex = []
 _electionTimeoutEvent = Event()
-_electionTimeout = 5 / 4
+_electionTimeout = 1 / 2
 _heartbeatTimeoutEvent = Event()
 _heartbeatTimeout = 1 / 16
-_short_time = 1 / 256
+_short_time = 1 / 128
 
 # A simple ping, returns true
 
@@ -169,7 +168,8 @@ def requestVote(serverid, term, last_log_index, last_log_term):
     global _isCrashed
     if _isCrashed:
         raise BaseException()
-    _electionTimeoutEvent.set()
+    if not _isCandidate and not _isLeader:
+        _electionTimeoutEvent.set()
     if term < _term:
         return [False, _term]
     if term > _term:
@@ -368,6 +368,8 @@ def candidate():
     global _short_time
     global _isCrashed
 
+    t = Timer(_electionTimeout * (1 - random.random() / 3), _electionTimeoutEvent.set)
+    t.start()
     assert not _isLeader
     _term += 1
     print("Server", servernum, "candidate for term", _term)
@@ -391,7 +393,7 @@ def candidate():
                 _heartbeatTimeoutEvent.clear()
                 return
             if _electionTimeoutEvent.is_set():
-                print("Election timed out")
+                print(time.time())
                 _electionTimeoutEvent.clear()
                 _heartbeatTimeoutEvent.set()
                 _heartbeatTimeoutEvent.clear()
@@ -411,7 +413,7 @@ def candidate():
 def follower(event, timeout):
     _matchIndex = []
     _nextIndex = []
-    while event.wait(timeout * (1 - random.random() / math.sqrt(7))):
+    while event.wait(timeout * (1 - random.random() / 3)):
         event.clear()
 
 
@@ -437,23 +439,12 @@ def raft_server():
         if _isCrashed:
             time.sleep(_short_time)
             continue
-        if _isLeader:
-            thread = Thread(target=leader)
-            thread.start()
-            thread.join()
+        elif _isLeader:
+            leader()
         elif _isCandidate:
-            thread = Thread(target=candidate)
-            thread.start()
-            thread.join(_electionTimeout *
-                        (1 - random.random() / math.sqrt(7)))
-            if thread.is_alive():
-                _electionTimeoutEvent.set()
-            thread.join()
+            candidate()
         else:
-            thread = Thread(target=follower, args=(
-                _electionTimeoutEvent, _electionTimeout))
-            thread.start()
-            thread.join()
+            follower(_electionTimeoutEvent, _electionTimeout)
             if not _isCrashed:
                 _isCandidate = True
 
@@ -483,6 +474,7 @@ def readconfig(config, servernum):
             serverlist.append(hostport)
 
     return maxnum, host, port
+
 
 if __name__ == "__main__":
     try:
