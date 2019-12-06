@@ -2,6 +2,8 @@ import argparse
 import math
 import random
 import time
+import signal
+import sys
 import xmlrpc.client
 from hashlib import sha256
 from socketserver import ThreadingMixIn
@@ -31,10 +33,10 @@ _lastApplied = 0
 _nextIndex = []
 _matchIndex = []
 _electionTimeoutEvent = Event()
-_electionTimeout = 1 / 2
+_electionTimeout = 5 / 4
 _heartbeatTimeoutEvent = Event()
-_heartbeatTimeout = 1 / 8
-_short_time = 1 / 64
+_heartbeatTimeout = 1 / 16
+_short_time = 1 / 256
 
 # A simple ping, returns true
 
@@ -411,7 +413,7 @@ def candidate():
 def follower(event, timeout):
     _matchIndex = []
     _nextIndex = []
-    while event.wait(timeout * (1 - random.random() / math.sqrt(5))):
+    while event.wait(timeout * (1 - random.random() / math.sqrt(7))):
         event.clear()
 
 
@@ -445,7 +447,7 @@ def raft_server():
             thread = Thread(target=candidate)
             thread.start()
             thread.join(_electionTimeout *
-                        (1 - random.random() / math.sqrt(5)))
+                        (1 - random.random() / math.sqrt(7)))
             if thread.is_alive():
                 _electionTimeoutEvent.set()
             thread.join()
@@ -484,9 +486,17 @@ def readconfig(config, servernum):
 
     return maxnum, host, port
 
+def signal_handler(signum, frame):
+    server.server_close()
+    sys.exit(0)
 
 if __name__ == "__main__":
     try:
+        # signals
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGHUP, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+
         parser = argparse.ArgumentParser(description="SurfStore server")
         parser.add_argument('config', help='path to config file')
         parser.add_argument('servernum', type=int, help='server number')
