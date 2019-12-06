@@ -17,7 +17,6 @@ class threadedXMLRPCServer(ThreadingMixIn, SimpleXMLRPCServer):
 
 
 # Variables
-_clients = None
 _isCrashed = False
 _isLeader = False
 _isCandidate = False
@@ -76,11 +75,23 @@ def hasblocks(hashlist):
 
 def getfileinfomap():
     """Gets the fileinfo map"""
+    global _short_time
+    global _isCrashed
+    global _isLeader
+
     if _isCrashed or not _isLeader:
         raise BaseException()
     print("GetFileInfoMap()")
-
-    return fileinfomap
+    rpc_threads = [Thread(client.surfstore.appendEntries(servernum, -1, 0, -1, [], 0)) for client in [xmlrpc.client.ServerProxy('http://' + serverlist[i]) for i in range(len(serverlist))]]
+    for thread in rpc_threads:
+        thread.start()
+    slots = [False] * len(serverlist)
+    while True:
+        for i, thread in enumerate(rpc_threads):
+            thread.join(_short_time)
+            slots[i] = not thread.is_alive()
+        if sum(slots) * 2 >= len(slots):
+            return fileinfomap
 
 # Update a file's fileinfo entry
 
@@ -433,13 +444,10 @@ def raft_server():
     global _term
     global _votedFor
     global _isCandidate
-    global _clients
     global _voteResults
     global _isCrashed
     global _short_time
 
-    _clients = [xmlrpc.client.ServerProxy(
-        'http://' + serverlist[i]) for i in range(len(serverlist))]
     _voteResults = [False for _ in range(len(serverlist))]
 
     while True:
