@@ -203,6 +203,7 @@ def appendEntries(serverid, term, prev_log_index, prev_log_term, entries, leader
     global _isCrashed
     if _isCrashed:
         raise BaseException()
+    _electionTimeoutEvent.set()
     if term < _term:
         return [False, _term]
     _isCandidate = False
